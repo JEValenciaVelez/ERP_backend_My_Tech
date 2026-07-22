@@ -1,0 +1,425 @@
+// ERP interno: la gestión de la empresa, no de un producto.
+//
+// Aquí vive lo que es transversal a todos los productos: los clientes, lo que
+// pagan, el staff que los atiende y lo que se le comisiona. Los productos
+// (kompra y los que sigan) solo saben operar su propio dominio y consultan
+// aquí si una cuenta está al día.
+//
+// Regla de la frontera: este repo nunca guarda datos operativos de un
+// producto (puntos, ventas, premios). Referencia sus cuentas por externalId
+// y nada más.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Prisma 7: la URL vive en prisma.config.ts (Migrate) y en el adapter que
+// recibe PrismaClient (runtime), no aquí.
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Clientes y sus cuentas en cada producto
+// ---------------------------------------------------------------------------
+
+// Un producto de la empresa. Es tabla y no enum para no tener que migrar el
+// esquema cada vez que nazca uno nuevo.
+model Product {
+  id   String @id @default(uuid())
+  code String @unique // kompra, ...
+  name String
+
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  accounts ProductAccount[]
+
+  @@map("products")
+}
+
+// La empresa cliente. La relación comercial es una sola aunque use varios
+// productos: por eso el asesor, las comisiones y el soporte cuelgan de aquí y
+// no de la cuenta de un producto.
+model Client {
+  id          String  @id @default(uuid())
+  name        String
+  contactName String?
+  email       String?
+  phone       String?
+  taxId       String? @unique // NIT
+
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  accounts      ProductAccount[]
+  assignments   ClientAssignment[]
+  subscriptions Subscription[]
+  payments      Payment[]
+  tickets       Ticket[]
+
+  @@map("clients")
+}
+
+// El puente con el backend de cada producto: externalId es el id del tenant
+// allá (el Business.id de kompra). Único por producto para que un tenant no
+// quede atado a dos clientes distintos.
+model ProductAccount {
+  id        String  @id @default(uuid())
+  clientId  String
+  client    Client  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+
+  externalId String
+  active     Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  subscriptions Subscription[]
+  tickets       Ticket[]
+
+  @@unique([productId, externalId])
+  @@index([clientId])
+  @@map("product_accounts")
+}
+
+// ---------------------------------------------------------------------------
+// Staff y asignación de cuentas
+// ---------------------------------------------------------------------------
+
+enum StaffRole {
+  ADVISOR // asesor: cartera de clientes, soporte de primera línea y comisión
+  SYSTEMS // área técnica: recibe escalamientos, no comisiona
+  ADMIN // administración: liquida comisiones y gestiona el staff
+}
+
+model Staff {
+  id    String    @id @default(uuid())
+  role  StaffRole
+  name  String
+  email String    @unique
+
+  passwordHash String
+
+  active      Boolean   @default(true)
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  assignments      ClientAssignment[]
+  commissions      Commission[]
+  settlements      Settlement[]
+  ownedTickets     Ticket[]           @relation("TicketOwner")
+  escalatedTickets Ticket[]           @relation("TicketEscalatedTo")
+  ticketComments   TicketComment[]
+
+  @@map("staff")
+}
+
+// Quién atiende cada cliente y DESDE CUÁNDO. Es histórico a propósito: la
+// comisión se atribuye al asesor vigente en la fecha del pago, así que
+// reasignar una cuenta no puede sobrescribir el pasado. endedAt null = vigente.
+//
+// isBackup marca al suplente que cubre vacaciones o salidas; no comisiona.
+//
+// Un índice parcial garantiza en base que no haya dos titulares vigentes por
+// cliente (ver la migración: Prisma no expresa índices con WHERE).
+model ClientAssignment {
+  id       String @id @default(uuid())
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  staffId  String
+  staff    Staff  @relation(fields: [staffId], references: [id])
+
+  isBackup Boolean @default(false)
+
+  startedAt DateTime  @default(now())
+  endedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clientId, endedAt])
+  @@index([staffId, endedAt])
+  @@map("client_assignments")
+}
+
+// ---------------------------------------------------------------------------
+// Suscripciones y pagos: la base de las comisiones y de los KPIs
+// ---------------------------------------------------------------------------
+
+enum SubscriptionStatus {
+  TRIAL
+  ACTIVE
+  PAST_DUE // pago vencido, todavía no se da de baja
+  CANCELED
+}
+
+enum BillingInterval {
+  MONTHLY
+  YEARLY
+}
+
+model Plan {
+  id       String          @id @default(uuid())
+  name     String
+  amount   Decimal         @db.Decimal(14, 2)
+  currency String          @default("COP")
+  interval BillingInterval @default(MONTHLY)
+
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  subscriptions Subscription[]
+
+  @@map("plans")
+}
+
+// Se suscribe una cuenta de producto, no el cliente: si usa dos productos,
+// son dos suscripciones. El asesor y la comisión siguen siendo del cliente.
+model Subscription {
+  id               String         @id @default(uuid())
+  clientId         String
+  client           Client         @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  productAccountId String
+  productAccount   ProductAccount @relation(fields: [productAccountId], references: [id])
+  planId           String
+  plan             Plan           @relation(fields: [planId], references: [id])
+
+  status SubscriptionStatus @default(TRIAL)
+
+  // Precio congelado al contratar: cambiar el Plan no debe mover lo que ya
+  // paga un cliente con tarifa antigua.
+  amount   Decimal @db.Decimal(14, 2)
+  currency String  @default("COP")
+
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+
+  startedAt    DateTime  @default(now())
+  canceledAt   DateTime?
+  cancelReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  payments Payment[]
+
+  @@index([clientId])
+  @@index([status])
+  @@map("subscriptions")
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+// La comisión se devenga contra un Payment en PAID, nunca contra la factura:
+// si la plata no entró, no hay comisión que reversar después.
+model Payment {
+  id             String       @id @default(uuid())
+  clientId       String
+  client         Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  subscriptionId String
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id])
+
+  status   PaymentStatus @default(PENDING)
+  amount   Decimal       @db.Decimal(14, 2)
+  currency String        @default("COP")
+
+  // Periodo que cubre este pago; sirve para prorratear y para los KPIs.
+  periodStart DateTime
+  periodEnd   DateTime
+
+  paidAt     DateTime?
+  refundedAt DateTime?
+
+  method      String? // transferencia, tarjeta, efectivo...
+  externalRef String? @unique // id de la pasarela, evita registrar dos veces el mismo pago
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  commission Commission?
+
+  @@index([clientId])
+  @@index([status, paidAt])
+  @@map("payments")
+}
+
+// ---------------------------------------------------------------------------
+// Comisiones y liquidación
+// ---------------------------------------------------------------------------
+
+enum CommissionStatus {
+  PENDING // devengada, aún sin liquidar
+  SETTLED // incluida en una liquidación cerrada
+  REVERSED // clawback: reversa del pago o baja temprana del cliente
+}
+
+// Una comisión por pago (@unique en paymentId). El asesor sale de la
+// asignación vigente en paidAt, no del asesor actual del cliente, y la tasa
+// se congela aquí: cambiar la tabla de tasas nunca debe mover el pasado.
+model Commission {
+  id        String  @id @default(uuid())
+  paymentId String  @unique
+  payment   Payment @relation(fields: [paymentId], references: [id])
+  staffId   String
+  staff     Staff   @relation(fields: [staffId], references: [id])
+
+  rate   Decimal @db.Decimal(5, 4) // 0.0800 = 8%
+  amount Decimal @db.Decimal(14, 2)
+
+  status       CommissionStatus @default(PENDING)
+  settlementId String?
+  settlement   Settlement?      @relation(fields: [settlementId], references: [id])
+
+  reversedAt     DateTime?
+  reversedReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([staffId, status])
+  @@index([settlementId])
+  @@map("commissions")
+}
+
+enum SettlementStatus {
+  OPEN // acumulando comisiones del periodo
+  CLOSED // cerrada: el total ya no se recalcula
+  PAID
+}
+
+// Corte mensual por asesor. Al cerrar se congela el total; las pantallas leen
+// este número y no recalculan al vuelo, para que la cifra sea la misma hoy y
+// dentro de un año.
+model Settlement {
+  id      String @id @default(uuid())
+  staffId String
+  staff   Staff  @relation(fields: [staffId], references: [id])
+
+  periodStart DateTime
+  periodEnd   DateTime
+
+  status   SettlementStatus @default(OPEN)
+  total    Decimal          @default(0) @db.Decimal(14, 2)
+  currency String           @default("COP")
+
+  closedAt DateTime?
+  paidAt   DateTime?
+  notes    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  commissions Commission[]
+
+  @@unique([staffId, periodStart])
+  @@index([status])
+  @@map("settlements")
+}
+
+// ---------------------------------------------------------------------------
+// Soporte
+// ---------------------------------------------------------------------------
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  ESCALATED
+  RESOLVED // lo declara quien arregla
+  CLOSED // lo confirma el asesor o el cliente tras verificar
+}
+
+enum TicketPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+// Por dónde llegó realmente. El cliente escribe por WhatsApp igual: el asesor
+// abre el ticket y deja el registro. Si no hay ticket, no existió.
+enum TicketChannel {
+  WHATSAPP
+  PHONE
+  EMAIL
+  IN_PERSON
+  APP
+}
+
+// El asesor (ownerId) NUNCA suelta el ticket, ni escalado: sistemas toma la
+// responsabilidad técnica pero la cara ante el cliente no cambia. Un ticket
+// con dueño compartido es un ticket sin dueño.
+model Ticket {
+  id       String @id @default(uuid())
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  // De qué producto es el problema. Opcional: hay tickets comerciales que no
+  // son de ninguno.
+  productAccountId String?
+  productAccount   ProductAccount? @relation(fields: [productAccountId], references: [id])
+
+  ownerId String
+  owner   Staff  @relation("TicketOwner", fields: [ownerId], references: [id])
+
+  escalatedToId String?
+  escalatedTo   Staff?  @relation("TicketEscalatedTo", fields: [escalatedToId], references: [id])
+
+  status   TicketStatus   @default(OPEN)
+  priority TicketPriority @default(NORMAL)
+  channel  TicketChannel  @default(WHATSAPP)
+
+  subject     String
+  description String
+
+  // Dos relojes: el del asesor (primera respuesta) y el del cliente
+  // (resolución total). Escalar pausa el primero, nunca el segundo: así se
+  // distingue una demora del asesor de una del área técnica.
+  firstResponseAt DateTime?
+  escalatedAt     DateTime?
+  resolvedAt      DateTime?
+  closedAt        DateTime?
+
+  // Diagnóstico, jamás indicador de desempeño: el día que reportar problemas
+  // perjudique al asesor, los tickets dejan de reflejar la realidad.
+  reopenCount Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  comments TicketComment[]
+
+  @@index([clientId, status])
+  @@index([ownerId, status])
+  @@index([escalatedToId, status])
+  @@map("tickets")
+}
+
+model TicketComment {
+  id       String @id @default(uuid())
+  ticketId String
+  ticket   Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorId String
+  author   Staff  @relation(fields: [authorId], references: [id])
+
+  body String
+
+  // Nota interna: no se le muestra al cliente.
+  internal Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([ticketId])
+  @@map("ticket_comments")
+}

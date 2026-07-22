@@ -1,0 +1,21 @@
+# Dependencias y build
+node_modules/
+dist/
+coverage
+
+# Entorno (el .env.example SÍ se versiona)
+.env
+.env.*
+!.env.example
+
+# Logs
+logs
+*.log
+
+# Editores
+.vscode
+.DS_Store
+
+# Lockfiles de otros gestores: aquí se usa pnpm
+package-lock.json
+yarn.lock
