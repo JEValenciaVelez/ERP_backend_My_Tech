@@ -98,6 +98,14 @@ export default {
     en: 'This client already has an account in that product',
     es: 'Este cliente ya tiene una cuenta en ese producto',
   },
+  'client.adminEmailRequired': {
+    en: 'Enter the email of the person who will administer the company in the product',
+    es: 'Indica el email de quien administrará la empresa en el producto',
+  },
+  'product.notConnected': {
+    en: 'This product is not connected to the ERP yet',
+    es: 'Este producto todavía no está conectado con el ERP',
+  },
   'productAccount.notFound': {
     en: 'Product account not found',
     es: 'Cuenta de producto no encontrada',

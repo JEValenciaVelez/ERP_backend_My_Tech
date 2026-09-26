@@ -32,6 +32,7 @@ create(r, '/clients/create', import('@/app/clients/create/route'), requireAdminO
 create(r, '/clients/update', import('@/app/clients/update/route'), requireAdminOrAdvisor);
 create(r, '/clients/assign', import('@/app/clients/assign/route'), requireAdmin);
 create(r, '/clients/link-product', import('@/app/clients/link-product/route'), requireAdmin);
+create(r, '/clients/provision', import('@/app/clients/provision/route'), requireAdmin);
 
 // Suscripciones y pagos: solo admin registra dinero.
 create(r, '/subscriptions/create', import('@/app/subscriptions/create/route'), requireAdmin);

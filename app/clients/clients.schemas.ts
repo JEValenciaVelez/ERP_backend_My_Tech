@@ -19,3 +19,11 @@ export const clientFields = {
   phone: trimmedOptional(30),
   taxId: trimmedOptional(30),
 };
+
+/** Administrador de la empresa en un producto (lo crea el aprovisionamiento). */
+export const adminSchema = z
+  .object({
+    name: z.string().trim().min(2).max(120),
+    email: z.preprocess((v) => (typeof v === 'string' ? v.trim().toLowerCase() : v), emailSchema),
+  })
+  .optional();
