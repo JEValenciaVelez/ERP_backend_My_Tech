@@ -1,5 +1,5 @@
 import type { Prisma, Staff } from '@prisma/client';
-import { ErrorForbidden, ErrorNotFound } from 'config/errors';
+import { ErrorBadRequest, ErrorForbidden, ErrorNotFound } from 'config/errors';
 
 import prisma from '@/models';
 
@@ -51,3 +51,18 @@ export async function assignOwner(clientId: string, staffId: string, tx: Tx) {
 
 export const staffSummary = (s: { id: string; name: string; email: string } | null | undefined) =>
   s ? { id: s.id, name: s.name, email: s.email } : null;
+
+/**
+ * Cuenta de producto de un cliente visible para quien la pide, ya aprovisionada
+ * (con externalId): la base de todo lo que el ERP hace dentro del producto.
+ */
+export async function provisionedAccountFor(staff: Staff, productAccountId: string) {
+  const account = await prisma.productAccount.findUnique({
+    where: { id: productAccountId },
+    include: { product: true },
+  });
+  if (!account) throw new ErrorNotFound({ code: 'productAccount.notFound' });
+  await assertClientVisible(staff, account.clientId);
+  if (!account.externalId) throw new ErrorBadRequest({ code: 'product.notProvisioned' });
+  return { ...account, externalId: account.externalId };
+}

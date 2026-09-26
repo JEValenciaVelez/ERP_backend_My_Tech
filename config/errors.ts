@@ -1,8 +1,10 @@
 import langsJson from '../assets/langs';
 import { HTTP_STATUS } from './constants';
 
+export type ErrorCode = keyof typeof langsJson;
+
 interface IErrorProps {
-  code: keyof typeof langsJson;
+  code: ErrorCode;
   message?: string;
   debugInfo?: any;
   codeArgs?: any[];

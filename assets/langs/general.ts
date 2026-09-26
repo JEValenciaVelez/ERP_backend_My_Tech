@@ -122,6 +122,34 @@ export default {
     en: 'No active administrator with that email in the company',
     es: 'No hay un administrador activo con ese email en la empresa',
   },
+  'productUser.notFound': {
+    en: 'That person does not belong to this company in the product',
+    es: 'Esa persona no pertenece a esta empresa en el producto',
+  },
+  'productUser.limit': {
+    en: 'The company reached the user limit of its plan',
+    es: 'La empresa llegó al tope de usuarios de su plan',
+  },
+  'productUser.emailExists': {
+    en: 'Someone in the company already uses that email',
+    es: 'Alguien de la empresa ya usa ese email',
+  },
+  'productUser.phoneExists': {
+    en: 'Someone in the company already uses that phone',
+    es: 'Alguien de la empresa ya usa ese teléfono',
+  },
+  'productUser.pinRequired': {
+    en: 'The PIN must have 4 digits',
+    es: 'El PIN debe tener 4 dígitos',
+  },
+  'productUser.lastAdmin': {
+    en: 'The company would be left without an active administrator',
+    es: 'La empresa quedaría sin un administrador activo',
+  },
+  'productDevice.notFound': {
+    en: 'That device does not belong to this company in the product',
+    es: 'Ese dispositivo no pertenece a esta empresa en el producto',
+  },
   'productAccount.notFound': {
     en: 'Product account not found',
     es: 'Cuenta de producto no encontrada',

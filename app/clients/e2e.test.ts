@@ -138,4 +138,23 @@ describe('clientes: afiliación y alcance', () => {
     expect(res.status).toBe(400);
     expect(res.body.errorCode).toBe('product.notProvisioned');
   });
+
+  it('gente del producto sin conexión con ANT: 400 product.notConnected', async () => {
+    const product = await prisma.product.findUniqueOrThrow({ where: { code: 'ant' } });
+    const client = await api('clients/create', { name: 'Obras sin conexión' }, ana.token);
+    const account = await prisma.productAccount.create({
+      data: {
+        clientId: client.body.data.id,
+        productId: product.id,
+        externalId: '44444444-4444-4444-8444-444444444444',
+      },
+    });
+    const res = await api(
+      'clients/product-people/list',
+      { productAccountId: account.id },
+      ana.token
+    );
+    expect(res.status).toBe(400);
+    expect(res.body.errorCode).toBe('product.notConnected');
+  });
 });

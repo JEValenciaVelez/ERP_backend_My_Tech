@@ -1,4 +1,10 @@
-import { ErrorBadGateway, ErrorBadRequest, ErrorConflict, ErrorNotFound } from 'config/errors';
+import {
+  ErrorBadGateway,
+  ErrorBadRequest,
+  ErrorCode,
+  ErrorConflict,
+  ErrorNotFound,
+} from 'config/errors';
 
 import { ANT_API_URL, ANT_SERVICE_TOKEN } from '@/config/env.config';
 import Logger from '@/helpers/logger-pino';
@@ -8,10 +14,17 @@ import prisma from '@/models';
  * Endpoint de servicio de cada producto. Hoy solo ANT tiene la conexión; los
  * demás quedan pendientes hasta que la tengan.
  */
-function targetFor(
-  productCode: string,
-  path: 'access' | 'tenant/create' | 'tenant/reset-admin-password'
-) {
+type ServicePath =
+  | 'access'
+  | 'tenant/create'
+  | 'tenant/reset-admin-password'
+  | 'users/list'
+  | 'users/create'
+  | 'users/update'
+  | 'devices/list'
+  | 'devices/revoke';
+
+function targetFor(productCode: string, path: ServicePath) {
   if (productCode === 'ant' && ANT_API_URL && ANT_SERVICE_TOKEN) {
     return {
       url: `${ANT_API_URL.replace(/\/$/, '')}/api/v1/service/${path}`,
@@ -46,34 +59,74 @@ export async function provisionTenant(
 }
 
 /**
- * Nueva contraseña temporal para el administrador de la empresa en el
- * producto (p. ej. el único admin la perdió). NO es idempotente: cada llamada
- * genera otra. Sin email, el producto resetea al único admin activo; si hay
- * varios, pide el email (409). Los errores del producto se traducen a errores
- * del ERP para mostrarlos en el panel.
+ * Llamada síncrona a un endpoint de servicio del producto, para acciones que
+ * el panel espera en el momento. Traduce los errores del producto a errores
+ * del ERP: `errors` mapea el errorCode del producto a uno propio (con su
+ * status), un 404 sin mapear es `notFound`, y cualquier otra cosa (caído,
+ * timeout, 5xx) es 502 product.unavailable.
  */
-export async function resetTenantAdmin(productCode: string, tenantId: string, email?: string) {
-  const target = targetFor(productCode, 'tenant/reset-admin-password');
+export async function callService<T = any>(
+  productCode: string,
+  path: ServicePath,
+  data: Record<string, unknown>,
+  opts: {
+    notFound?: ErrorCode;
+    errors?: Record<string, { status: 400 | 409; code: ErrorCode }>;
+  } = {}
+): Promise<T> {
+  const target = targetFor(productCode, path);
   if (!target) throw new ErrorBadRequest({ code: 'product.notConnected' });
   let res: globalThis.Response;
   try {
     res = await fetch(target.url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${target.token}` },
-      body: JSON.stringify({ data: { tenantId, ...(email ? { email } : {}) } }),
+      body: JSON.stringify({ data }),
       signal: AbortSignal.timeout(10_000),
     });
   } catch (err) {
-    Logger.logError({ error: err, method: 'resetTenantAdmin', path: target.url });
+    Logger.logError({ error: err, method: 'callService', path: target.url });
     throw new ErrorBadGateway({ code: 'product.unavailable' });
   }
   const body: any = await res.json().catch(() => null);
-  if (res.ok) return body.data.admin as { email: string; temporaryPassword: string };
-  if (body?.errorCode === 'company.adminAmbiguous') {
-    throw new ErrorConflict({ code: 'productAdmin.ambiguous' });
+  if (res.ok && body) return body.data as T;
+
+  const mapped = body?.errorCode && opts.errors?.[body.errorCode];
+  if (mapped) {
+    throw mapped.status === 409
+      ? new ErrorConflict({ code: mapped.code })
+      : new ErrorBadRequest({ code: mapped.code });
   }
-  if (res.status === 404) throw new ErrorNotFound({ code: 'productAdmin.notFound' });
+  // La empresa no existe en el producto: el externalId quedó desfasado. No es
+  // culpa de quien usa el panel, se trata como producto no disponible.
+  if (res.status === 404 && opts.notFound && body?.errorCode !== 'company.notFound') {
+    throw new ErrorNotFound({ code: opts.notFound });
+  }
+  Logger.logError({
+    error: new Error(`HTTP ${res.status} ${body?.errorCode ?? ''}`),
+    method: 'callService',
+    path: target.url,
+  });
   throw new ErrorBadGateway({ code: 'product.unavailable' });
+}
+
+/**
+ * Nueva contraseña temporal para el administrador de la empresa en el
+ * producto (p. ej. el único admin la perdió). NO es idempotente: cada llamada
+ * genera otra. Sin email, el producto resetea al único admin activo; si hay
+ * varios, pide el email (409).
+ */
+export async function resetTenantAdmin(productCode: string, tenantId: string, email?: string) {
+  const data = await callService<{ admin: { email: string; temporaryPassword: string } }>(
+    productCode,
+    'tenant/reset-admin-password',
+    { tenantId, ...(email ? { email } : {}) },
+    {
+      notFound: 'productAdmin.notFound',
+      errors: { 'company.adminAmbiguous': { status: 409, code: 'productAdmin.ambiguous' } },
+    }
+  );
+  return data.admin;
 }
 
 /**

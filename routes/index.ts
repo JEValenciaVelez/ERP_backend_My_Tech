@@ -39,6 +39,38 @@ create(
   import('@/app/clients/reset-product-admin/route'),
   requireAdmin
 );
+// Gente y dispositivos de la empresa dentro del producto: el admin o el asesor
+// del cliente, igual que el administrador de la empresa en el producto.
+create(
+  r,
+  '/clients/product-people/list',
+  import('@/app/clients/product-people/list/route'),
+  requireAdminOrAdvisor
+);
+create(
+  r,
+  '/clients/product-people/create',
+  import('@/app/clients/product-people/create/route'),
+  requireAdminOrAdvisor
+);
+create(
+  r,
+  '/clients/product-people/update',
+  import('@/app/clients/product-people/update/route'),
+  requireAdminOrAdvisor
+);
+create(
+  r,
+  '/clients/product-devices/list',
+  import('@/app/clients/product-devices/list/route'),
+  requireAdminOrAdvisor
+);
+create(
+  r,
+  '/clients/product-devices/revoke',
+  import('@/app/clients/product-devices/revoke/route'),
+  requireAdminOrAdvisor
+);
 
 // Suscripciones y pagos: solo admin registra dinero.
 create(r, '/subscriptions/create', import('@/app/subscriptions/create/route'), requireAdmin);
