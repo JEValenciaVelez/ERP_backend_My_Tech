@@ -121,4 +121,21 @@ describe('clientes: afiliación y alcance', () => {
     );
     expect(again.status).toBe(409);
   });
+
+  it('resetear la contraseña del admin en el producto: solo admin y solo con la cuenta aprovisionada', async () => {
+    const account = await prisma.productAccount.findFirstOrThrow({
+      where: { clientId: anaClientId },
+    });
+    expect(
+      (await api('clients/reset-product-admin', { productAccountId: account.id }, beto.token))
+        .status
+    ).toBe(403);
+    const res = await api(
+      'clients/reset-product-admin',
+      { productAccountId: account.id },
+      admin.token
+    );
+    expect(res.status).toBe(400);
+    expect(res.body.errorCode).toBe('product.notProvisioned');
+  });
 });

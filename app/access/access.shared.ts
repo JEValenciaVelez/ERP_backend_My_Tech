@@ -1,3 +1,5 @@
+import { ErrorBadGateway, ErrorBadRequest, ErrorConflict, ErrorNotFound } from 'config/errors';
+
 import { ANT_API_URL, ANT_SERVICE_TOKEN } from '@/config/env.config';
 import Logger from '@/helpers/logger-pino';
 import prisma from '@/models';
@@ -6,7 +8,10 @@ import prisma from '@/models';
  * Endpoint de servicio de cada producto. Hoy solo ANT tiene la conexión; los
  * demás quedan pendientes hasta que la tengan.
  */
-function targetFor(productCode: string, path: 'access' | 'tenant/create') {
+function targetFor(
+  productCode: string,
+  path: 'access' | 'tenant/create' | 'tenant/reset-admin-password'
+) {
   if (productCode === 'ant' && ANT_API_URL && ANT_SERVICE_TOKEN) {
     return {
       url: `${ANT_API_URL.replace(/\/$/, '')}/api/v1/service/${path}`,
@@ -38,6 +43,37 @@ export async function provisionTenant(
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const body: any = await res.json();
   return { tenantId: body.data.tenantId, admin: body.data.admin };
+}
+
+/**
+ * Nueva contraseña temporal para el administrador de la empresa en el
+ * producto (p. ej. el único admin la perdió). NO es idempotente: cada llamada
+ * genera otra. Sin email, el producto resetea al único admin activo; si hay
+ * varios, pide el email (409). Los errores del producto se traducen a errores
+ * del ERP para mostrarlos en el panel.
+ */
+export async function resetTenantAdmin(productCode: string, tenantId: string, email?: string) {
+  const target = targetFor(productCode, 'tenant/reset-admin-password');
+  if (!target) throw new ErrorBadRequest({ code: 'product.notConnected' });
+  let res: globalThis.Response;
+  try {
+    res = await fetch(target.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${target.token}` },
+      body: JSON.stringify({ data: { tenantId, ...(email ? { email } : {}) } }),
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (err) {
+    Logger.logError({ error: err, method: 'resetTenantAdmin', path: target.url });
+    throw new ErrorBadGateway({ code: 'product.unavailable' });
+  }
+  const body: any = await res.json().catch(() => null);
+  if (res.ok) return body.data.admin as { email: string; temporaryPassword: string };
+  if (body?.errorCode === 'company.adminAmbiguous') {
+    throw new ErrorConflict({ code: 'productAdmin.ambiguous' });
+  }
+  if (res.status === 404) throw new ErrorNotFound({ code: 'productAdmin.notFound' });
+  throw new ErrorBadGateway({ code: 'product.unavailable' });
 }
 
 /**

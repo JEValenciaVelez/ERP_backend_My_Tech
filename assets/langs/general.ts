@@ -106,6 +106,22 @@ export default {
     en: 'This product is not connected to the ERP yet',
     es: 'Este producto todavía no está conectado con el ERP',
   },
+  'product.notProvisioned': {
+    en: 'This account has not been created in the product yet',
+    es: 'Esta cuenta todavía no está creada en el producto',
+  },
+  'product.unavailable': {
+    en: 'The product did not respond. Try again in a moment',
+    es: 'El producto no respondió. Inténtalo de nuevo en un momento',
+  },
+  'productAdmin.ambiguous': {
+    en: 'The company has several administrators: enter the email of the one to reset',
+    es: 'La empresa tiene varios administradores: indica el email del que quieres resetear',
+  },
+  'productAdmin.notFound': {
+    en: 'No active administrator with that email in the company',
+    es: 'No hay un administrador activo con ese email en la empresa',
+  },
   'productAccount.notFound': {
     en: 'Product account not found',
     es: 'Cuenta de producto no encontrada',
