@@ -1,0 +1,34 @@
+{
+  "compilerOptions": {
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitAny": true,
+    "target": "ESNext",
+    "module": "CommonJS",
+    "allowJs": true,
+    "checkJs": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "paths": {
+      "*": ["./*"],
+      "@/*": ["./*"],
+      "@/app/*": ["./app/*"],
+      "@/config/*": ["./config/*"],
+      "@/helpers/*": ["./helpers/*"],
+      "@/models/*": ["./models/*"],
+      "@/routes/*": ["./routes/*"],
+      "@/ws/*": ["./ws/*"],
+      "@/middleware/*": ["./middleware/*"],
+      "@/jobs/*": ["./jobs/*"],
+      "@/webSocketService/*": ["./webSocketService/*"]
+    },
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "typeRoots": ["./typeRoots.d.ts", "node_modules/@types"]
+  },
+  "include": ["./globals.d.ts", "./**/*.ts"],
+  "exclude": ["node_modules", "tests/**/*", "vitest.config.ts", "tmp"]
+}

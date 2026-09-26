@@ -4,8 +4,9 @@ Gestión de la empresa: clientes, suscripciones, pagos, comisiones de asesores
 y soporte. Es transversal a los productos: hoy **kompra** (fidelización) y
 **fío** (cobranza en campo), y los que sigan.
 
-Por ahora es solo el modelo de datos. No hay API todavía, así que la
-integración con los productos está descrita pero no construida.
+Tiene API (este repo) y panel ([frontend-erp](../frontend-erp)). El envío de
+la fecha de acceso ya está construido del lado del ERP; falta el endpoint que la
+reciba en cada producto (ver «El contrato de acceso»).
 
 ## La frontera con los productos
 
@@ -102,25 +103,65 @@ Están comentadas en `prisma/schema.prisma`, pero las que más importan:
   reportar problemas perjudique al asesor, los tickets dejan de reflejar la
   realidad.
 
-## Puesta en marcha
+## Quién hace qué en el panel
+
+| Rol | Puede |
+| --- | --- |
+| **ADMIN** | Todo: staff y % de cada asesor, planes, clientes, asignaciones, suscripciones, registrar y reembolsar pagos, liquidar comisiones, reintentar envíos de acceso |
+| **ADVISOR** (asesor comercial) | Afiliar empresas (queda como titular), ver y editar SUS empresas, ver sus pagos y SU comisión, sus liquidaciones, abrir tickets y escalarlos a sistemas |
+| **SYSTEMS** (TI) | Ver los tickets que le escalaron, comentar y marcarlos resueltos |
+
+El alcance lo impone el servidor: un asesor que pide un cliente ajeno recibe 404.
+
+## Reglas del dinero
+
+- **Pago manual** (`payments/register`, sin pasarela). En una transacción: el pago
+  cubre el siguiente período según el plazo del plan (mensual, trimestral,
+  semestral o anual), la suscripción queda `ACTIVE`, se devenga la comisión y
+  queda pendiente enviar `accessUntil` y `maxUsers` al producto.
+- **Período:** si la suscripción sigue vigente, el nuevo arranca donde termina
+  el actual (pagar antes no hace perder días); si ya venció, arranca el día del
+  pago.
+- **Idempotencia:** la misma referencia (`externalRef`) devuelve el pago
+  existente en vez de duplicarlo.
+- **Comisión:** para el asesor titular vigente, con su `commissionRate` de ese
+  momento (se copia a la comisión). Recurrente: cada pago de sus empresas.
+- **Liquidación:** cada asesor tiene una abierta que acumula sus comisiones. Al
+  cerrarla el total se congela; la siguiente empieza en ese momento. Luego se
+  marca pagada (transferencia manual).
+- **Reembolso:** reversa la comisión. Si ya estaba liquidada, se descuenta
+  (`deductions`) de la próxima liquidación del asesor. No mueve la fecha de
+  acceso: para cortar el servicio se cancela la suscripción.
+- **Cancelación:** el cliente conserva el acceso hasta el final de lo que pagó.
+
+## Puesta en marcha (local)
 
 ```bash
 pnpm install
 cp .env.example .env          # y apuntar DATABASE_URL a la base del ERP
-createdb erp_db               # o crearla desde psql
-pnpm db:migrate --name init
-pnpm db:generate
+createdb erp_db
+pnpm db:migrate               # aplica las migraciones (incluye el índice parcial de titular único)
+pnpm db:seed                  # productos, admin (admin@erp.dev / admin12345) y planes de ejemplo
+pnpm dev                      # API en http://localhost:8300
 ```
 
-Falta agregar el índice parcial que garantiza un solo asesor titular vigente
-por cliente. Prisma no expresa índices con `WHERE`, así que va en una
-migración escrita a mano:
+Tests (`pnpm test`): corren contra `erp_db_test` (se crea con `createdb erp_db_test`),
+nunca contra la base de desarrollo; el setup la migra y la vacía.
 
-```sql
-CREATE UNIQUE INDEX "client_assignments_titular_vigente_key"
-  ON "client_assignments" ("clientId")
-  WHERE "endedAt" IS NULL AND "isBackup" = false;
-```
+## Despliegue
 
-Se crea con `npx prisma migrate dev --create-only --name unico_titular_vigente`
-y se pega ese SQL en el `migration.sql` generado.
+Mismo patrón que Mérito: **Render** para base, Key Value y API; **Vercel** para el panel.
+
+- `render.yaml`: producción (rama `main`). `render.sandbox.yaml`: sandbox (rama
+  `sandbox`), como Blueprint aparte.
+- Las migraciones corren en `preDeployCommand` en cada deploy.
+- Después del primer deploy:
+  1. En el servicio: `CORS_ORIGINS` con la URL exacta del panel en Vercel, y
+     `ADMIN_NOMBRE`, `ADMIN_CORREO`, `ADMIN_CLAVE` (mínimo 12 caracteres).
+  2. En el Shell del servicio: `node dist/seed.js` crea los productos y el
+     administrador. En producción no crea planes: se crean desde el panel.
+  3. Borra `ADMIN_CLAVE` del servicio.
+  4. En Vercel (proyecto `frontend-erp`): `VITE_API_URL=https://erp-api.onrender.com/api/v1`.
+- `ANT_API_URL` y `ANT_SERVICE_TOKEN` quedan vacíos hasta que exista
+  `backend-ant`; mientras tanto los envíos de acceso quedan pendientes y se
+  reintentan desde el panel (Resumen → «Reintentar envío»).

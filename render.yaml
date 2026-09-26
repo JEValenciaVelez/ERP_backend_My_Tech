@@ -1,0 +1,102 @@
+# Blueprint de Render para el ERP (producción): API + base + Key Value.
+#
+# Crea la base, el Key Value y el servicio web en Virginia, la región más cercana
+# a Colombia. El panel (frontend-erp) va aparte, en Vercel.
+# Pasos manuales después del primer deploy: README.md → «Despliegue».
+# Referencia: https://render.com/docs/blueprint-spec
+
+databases:
+  - name: erp-db
+    databaseName: erp
+    user: erp
+    plan: basic-256mb
+    region: virginia
+    postgresMajorVersion: "16"
+    # Sin acceso desde internet: solo el servicio web, por la red privada.
+    ipAllowList: []
+
+services:
+  # Ventanas del límite de intentos del login (helpers/limite.ts). Sin Redis el
+  # backend usa memoria, pero cada deploy o reinicio olvidaría los fallos.
+  - type: keyvalue
+    name: erp-kv
+    plan: starter
+    region: virginia
+    # Las ventanas llevan TTL: si falta memoria se desalojan las que caducan antes.
+    maxmemoryPolicy: volatile-lru
+    ipAllowList: []
+
+  - type: web
+    name: erp-api
+    runtime: node
+    plan: starter
+    region: virginia
+    branch: main
+    # Cada push a main despliega.
+    autoDeploy: true
+    # pnpm fijado a la versión del lockfile. --prod=false: con NODE_ENV=production
+    # pnpm se saltaría las devDependencies, y el build necesita tsc y esbuild.
+    buildCommand: npx --yes pnpm@10.30.3 install --frozen-lockfile --prod=false && npx --yes pnpm@10.30.3 build
+    # Migraciones automáticas en CADA deploy, antes de pasar tráfico a la versión
+    # nueva. Si una falla, el deploy se detiene y sigue la versión anterior.
+    preDeployCommand: node_modules/.bin/prisma migrate deploy
+    startCommand: node dist/erp.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "24"
+      - key: MULTI_CORE
+        value: "0"
+
+      - key: DATABASE_URL
+        fromDatabase:
+          name: erp-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: erp-kv
+          property: connectionString
+
+      # Firma de los tokens: Render genera un valor aleatorio al crear el servicio.
+      # Cambiarlo invalida todas las sesiones abiertas.
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_ACCESS_TTL
+        value: 12h
+
+      # Origen exacto del panel en producción (p. ej. https://erp-panel.vercel.app).
+      # Varios, separados por coma. Nunca '*'.
+      - key: CORS_ORIGINS
+        sync: false
+      # Render pone un proxy delante: req.ip sale de x-forwarded-for con 1 salto.
+      - key: TRUST_PROXY
+        value: "1"
+
+      - key: LOGIN_VENTANA_SEGUNDOS
+        value: "900"
+      - key: LOGIN_MAX_POR_CORREO
+        value: "10"
+      - key: LOGIN_MAX_POR_IP
+        value: "50"
+
+      # Envío de accessUntil/maxUsers a backend-ant. Vacíos hasta que exista:
+      # los pagos quedan con el envío pendiente y se reintentan desde el panel.
+      - key: ANT_API_URL
+        sync: false
+      - key: ANT_SERVICE_TOKEN
+        sync: false
+
+      # Administrador inicial para `node dist/seed.js` (una vez, desde el Shell).
+      # Puedes borrarlas del servicio después de crear el administrador.
+      - key: ADMIN_NOMBRE
+        sync: false
+      - key: ADMIN_CORREO
+        sync: false
+      - key: ADMIN_CLAVE
+        sync: false
+
+      - key: API_TOKEN_PINO
+        sync: false
